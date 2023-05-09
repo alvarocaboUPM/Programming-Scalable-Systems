@@ -1,6 +1,6 @@
 defmodule Final do
   @moduledoc """
-  Documentation for `Final`.
+  Entrega final evaluable
   """
   def date_parts(date_str) do
     String.split(date_str, "-")
@@ -21,19 +21,18 @@ defmodule Final do
     fibs(n - 1, [fib_n, fib_n_minus_1, fib_n_minus_2 | fib_list])
   end
 
-  @spec map([a], (a -> b)) :: [b]
+  @spec map([a], (a -> b)) :: [b] when a: any(), b: any()
   def map(list, func) do
     for item <- list, do: func.(item)
   end
 
-  @spec reduce([a], b, ((a, b) -> b)) :: b
+  @spec reduce(list :: [a], acc :: b, func :: (a, b -> b)) :: b when a: any(), b: any()
   def reduce(list, acc, func) do
     Enum.reduce(list, acc, func)
   end
 
-  @spec filter([a], (a -> boolean())) :: [a]
+  @spec filter(list :: [a], func :: (a -> boolean())) :: [a] when a: any()
   def filter(list, func) do
     Enum.filter(list, func)
   end
-
 end
