@@ -9,9 +9,11 @@ defmodule Final do
   end
 
   @spec fibs(pos_integer()) :: [pos_integer()]
-  def fibs(n) when n > 0 do
-    fibs(n, [0, 1])
+  def fibs(n) when n >= 0 do
+    fibs(n, [1,0])
   end
+
+  defp fibs(0, _), do: [0]
 
   defp fibs(1, fib_list) do
     Enum.reverse(fib_list)
@@ -25,23 +27,24 @@ defmodule Final do
   @spec map([a], (a -> b)) :: [b] when a: any(), b: any()
   def map([], _func), do: []
 
-  def map([h|t], func) do
+  def map([h | t], func) do
     [func.(h) | map(t, func)]
   end
 
   @spec reduce(list :: [a], acc :: b, func :: (a, b -> b)) :: b when a: any(), b: any()
   def reduce([], acc, _func), do: acc
 
-  def reduce([h|t], acc, func) do
-    acc= func.(h,acc)
+  def reduce([h | t], acc, func) do
+    acc = func.(h, acc)
     reduce(t, acc, func)
   end
 
   @spec filter(list :: [a], func :: (a -> boolean())) :: [a] when a: any()
   def filter([], _func), do: []
 
-  def filter([h|t], func) do
+  def filter([h | t], func) do
     res = func.(h)
+
     if res == true do
       [h | filter(t, func)]
     else
@@ -50,154 +53,210 @@ defmodule Final do
   end
 
   defmodule Bank do
-    #  Creates a bank and returns a "bank" pid
+    @moduledoc """
+    Simple bank application - non concurrent
+    """
+
+    @doc """
+    Creates a bank process and returns a "bank" pid
+    """
     def create_bank() do
-      spawn(fn -> loop(%{accounts: %{}, next_account_id: 1}) end)
+      pid= spawn(fn -> bankserver(%{}) end)
+      {:ok, pid}
     end
 
-    defp loop(state) do
+    @doc """
+    Creates a new account with account balance 0. Returns true if the
+    account could be created (it was new) and false otherwise.
+    """
+    @spec new_account(bank :: pid(), account :: String.t()) :: boolean()
+    def new_account(bank, account) do
+      case Map.has_key?(bank, account) do
+        true ->
+          false
+
+        false ->
+          Map.put(bank, account, 0)
+          true
+      end
+    end
+
+    @doc """
+    Withdraws money from the account (if quantity <= account balance).
+    Returns the amount of money withdrawn.
+    """
+    @spec withdraw(bank :: pid(), from_account :: String.t(), quantity :: number()) :: {:ok, number()} | {:error, String.t()}
+    def withdraw(bank, account, quantity) do
+      case Map.get(bank, account) do
+        nil ->
+          {:error, "account does not exist"}
+
+        balance when balance >= quantity ->
+          new_balance = balance - quantity
+          Map.put(bank, account, new_balance)
+          {:ok, quantity}
+
+        _ ->
+          {:error, "insufficient funds"}
+      end
+    end
+
+    @doc """
+    Increases balance of account by quantity, returning the new balance.
+    """
+    @spec deposit(bank :: pid(), from_account :: String.t(), quantity :: number()) :: {:ok, number()} | {:error, String.t()}
+    def deposit(bank, account, quantity) do
+      case Map.get(bank, account) do
+        nil ->
+          {:error, "account does not exist"}
+
+        balance ->
+          new_balance = balance + quantity
+          Map.put(bank, account, new_balance)
+          {:ok, new_balance}
+      end
+    end
+
+    @doc """
+    Transfers quantity from one account (if the balance is sufficient)
+    to another account. Returns the amount of money transferred.
+    """
+    @spec transfer(bank :: pid(), from_account :: String.t(), to_account :: String.t(), quantity :: number()) :: {:ok, number()} | {:error, String.t()}
+    def transfer(bank, from_account, to_account, quantity) do
+      case withdraw(bank, from_account, quantity) do
+        {:ok, withdrawn} ->
+          case deposit(bank, to_account, withdrawn) do
+            {:ok, deposited} ->
+              {:ok, deposited}
+
+            {:error, reason} ->
+              deposit(bank, from_account, withdrawn)
+              {:error, reason}
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+
+    @doc """
+    Returns the current balance for the account
+    """
+    def balance(bank, account) do
+      case Map.get(bank, account) do
+        nil -> {:error, "account does not exist"}
+        balance -> {:ok, balance}
+      end
+    end
+
+    # Servidor
+
+    @spec bankserver(map()) :: :ok
+    def bankserver(bank) do
       receive do
         {:new_account, from, account} ->
-          new_state = new_account(pid_to_state(state), account)
-          send(from, {:ok, state_to_pid(new_state)})
-          loop(state)
+          case Map.has_key?(bank, account) do
+            true ->
+              send(from, {:error, "account already exists"})
+              bankserver(bank)
 
-        {:withdraw, from, account_id, amount} ->
-          new_state = withdraw(pid_to_state(state), account_id, amount)
-          send(from, {:ok, state_to_pid(new_state)})
-          loop(state)
+            false ->
+              send(from, :ok)
+              bankserver(Map.put(bank, account, 0))
+          end
 
-        {:deposit, from, account_id, amount} ->
-          new_state = deposit(pid_to_state(state), account_id, amount)
-          send(from, {:ok, state_to_pid(new_state)})
-          loop(state)
-
-        {:transfer, from, account_id_from, account_id_to, amount} ->
-          new_state = transfer(pid_to_state(state), account_id_from, account_id_to, amount)
-          send(from, {:ok, state_to_pid(new_state)})
-          loop(state)
-
-        {:balance, from, account_id} ->
-          send(from, {:ok, balance(pid_to_state(state), account_id)})
-          loop(state)
-      end
-    end
-
-    defp pid_to_state(pid) do
-      :sys.get_state(pid)
-    end
-
-    defp state_to_pid(state) do
-      # Use :erlang.term_to_binary to convert the state to a binary,
-      # and then spawn a new process that loads the binary into its state.
-      binary_state = state_to_binary(state)
-
-      spawn(fn ->
-        :sys.replace_state(self(), :erlang.binary_to_term(binary_state))
-        loop(:sys.get_state(self()))
-      end)
-    end
-
-    defp state_to_binary(state) do
-      # Use :erlang.term_to_binary to convert the state to a binary.
-      :erlang.term_to_binary(state)
-    end
-
-    # Creates a new account with account balance 0. Returns true if the
-    # account could be created (it was new) and false otherwise.
-    def new_account(bank_pid, account) do
-      case :sys.get_state(bank_pid) do
-        %{accounts: accounts} ->
-          case Map.get(accounts, account) do
+        {:withdraw, from, account, quantity} ->
+          case Map.get(bank, account) do
             nil ->
-              new_accounts = Map.put(accounts, account, 0)
-              :sys.replace_state(bank_pid, %{accounts: new_accounts})
-              {:ok, true}
+              send(from, {:error, "account does not exist"})
+              bankserver(bank)
+
+            balance when balance >= quantity ->
+              new_balance = balance - quantity
+              send(from, {:ok, quantity})
+              bankserver(Map.put(bank, account, new_balance))
 
             _ ->
-              {:ok, false}
+              send(from, {:error, "insufficient funds"})
+              bankserver(bank)
           end
 
-        _ ->
-          {:error, "Bank not found"}
-      end
-    end
-
-    # Withdraws money from the account (if quantity =< account balance).
-    # Returns the amount of money withdrawn.
-    def withdraw(bank_pid, account, quantity) do
-      case :sys.get_state(bank_pid) do
-        %{accounts: accounts} ->
-          case Map.get(accounts, account) do
+        {:deposit, from, account, quantity} ->
+          case Map.get(bank, account) do
             nil ->
-              {:error, "Account not found"}
-
-            balance ->
-              if balance >= quantity do
-                new_balance = balance - quantity
-                new_accounts = Map.put(accounts, account, new_balance)
-                :sys.replace_state(bank_pid, %{accounts: new_accounts})
-                {:ok, new_balance}
-              else
-                {:error, "Insufficient funds"}
-              end
-          end
-
-        _ ->
-          {:error, "Invalid bank PID"}
-      end
-    end
-
-    # Increases balance of account by quantity, returning the new balance.
-    def deposit(bank_pid, account, quantity) do
-      case :sys.get_state(bank_pid) do
-        %{accounts: accounts} ->
-          case Map.get(accounts, account) do
-            nil ->
-              {:error, "Account not found"}
+              send(from, {:error, "account does not exist"})
+              bankserver(bank)
 
             balance ->
               new_balance = balance + quantity
-              new_accounts = Map.put(accounts, account, new_balance)
-              :sys.replace_state(bank_pid, %{accounts: new_accounts})
-              {:ok, new_balance}
+              send(from, {:ok, new_balance})
+              bankserver(Map.put(bank, account, new_balance))
           end
 
-        _ ->
-          {:error, "Invalid bank PID"}
-      end
-    end
+        {:transfer, from, from_account, to_account, quantity} ->
+          case Map.get(bank, from_account) do
+            nil ->
+              send(from, {:error, "from account does not exist"})
+              bankserver(bank)
 
-    # Transfers quantity from one account (if the balance is sufficient)
-    # to another account. Returns the amount of money transferred.
-    def transfer(bank_pid, from_account, to_account, quantity) do
-      case withdraw(bank_pid, from_account, quantity) do
-        {:ok, amount} ->
-          case deposit(bank_pid, to_account, amount) do
-            {:ok, new_balance} ->
-              {:ok, amount}
+            balance when balance >= quantity ->
+              case Map.get(bank, to_account) do
+                nil ->
+                  send(from, {:error, "to account does not exist"})
+                  bankserver(bank)
 
-            error ->
-              error
+                _ ->
+                  new_from_balance = balance - quantity
+                  new_to_balance = Map.get(bank, to_account) + quantity
+                  send(from, {:ok, quantity})
+                  bankserver(Map.put(Map.put(bank, from_account, new_from_balance), to_account, new_to_balance))
+              end
+
+            _ ->
+              send(from, {:error, "insufficient funds"})
+              bankserver(bank)
           end
 
-        error ->
-          error
-      end
-    end
+        {:balance, from, account} ->
+          case Map.get(bank, account) do
+            nil ->
+              send(from, {:error, "account does not exist"})
+              bankserver(bank)
 
-    # Returns the current balance for the account
-    def balance(bank_pid, account) do
-      case :sys.get_state(bank_pid) do
-        %{accounts: accounts} ->
-          case Map.get(accounts, account) do
-            nil -> {:error, "Account not found"}
-            balance -> {:ok, balance}
+            balance ->
+              send(from, {:ok, balance})
+              bankserver(bank)
           end
 
-        _ ->
-          {:error, "Invalid bank PID"}
-      end
+        {:stop, from} ->
+          send(from, :ok)
+        end
     end
+    end
+end
+
+defmodule OTPBank do
+  use GenServer
+  # Cliente
+  def create_bank() do
+    GenServer.start(__MODULE__, %{})
   end
+
+  #GenServer.call -> Llamda síncrona
+  #GenServer.cast -> Llamda asíncrona
+
+  # Servidor (Cambiar lista por mapa)
+  def init(%{}) do
+    {:ok, %{}}
+  end
+
+  def handle_call(:balance, _state) do
+
+  end
+
+  def handle_cast({:new_account, account}, state) do
+    {:noreply, [account | state]}
+  end
+
+
 end
