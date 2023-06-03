@@ -67,6 +67,7 @@ defmodule Final do
     @spec new_account(bank :: pid(), account :: String.t()) :: boolean()
     def new_account(bank, account) do
       send(bank, {:new_account, self(), account})
+
       receive do
         :ok -> true
         _ -> false
@@ -83,9 +84,13 @@ defmodule Final do
             {:ok, number()} | {:error, String.t()}
     def withdraw(bank, from_account, quantity) do
       send(bank, {:withdraw, self(), from_account, quantity})
+
       receive do
-        {:ok, amount} -> amount
-        {:error, msg} -> msg
+        {:ok, amount} ->
+          amount
+
+        {:error, msg} ->
+          msg
       end
     end
 
@@ -96,9 +101,10 @@ defmodule Final do
     Returns `{:error, reason}` if the deposit failed, where `reason` is an error message.
     """
     @spec deposit(bank :: pid(), from_account :: String.t(), quantity :: number()) ::
-            number()| {:error, String.t()}
+            number() | {:error, String.t()}
     def deposit(bank, from_account, quantity) do
       send(bank, {:deposit, self(), from_account, quantity})
+
       receive do
         {:ok, amount} -> amount
         {:error, msg} -> msg
@@ -114,11 +120,11 @@ defmodule Final do
             {:ok, number()} | {:error, String.t()}
     def balance(bank, account) do
       send(bank, {:balance, self(), account})
+
       receive do
         {:ok, balance} -> balance
         {:error, msg} -> msg
       end
-
     end
 
     @doc """
@@ -135,6 +141,7 @@ defmodule Final do
           ) :: {:ok, number()} | {:error, String.t()}
     def transfer(bank, from_account, to_account, quantity) do
       send(bank, {:transfer, self(), from_account, to_account, quantity})
+
       receive do
         {:ok, amount} -> amount
         {:error, msg} -> msg
@@ -147,36 +154,35 @@ defmodule Final do
     @spec bankserver(map()) :: :ok
     def bankserver(accounts) do
       receive do
-        {:new_account, from_pid, account, } ->
+        {:new_account, from_pid, account} ->
           case Map.has_key?(accounts, account) do
             true ->
               send(from_pid, {:err, false})
               bankserver(accounts)
+
             false ->
               send(from_pid, :ok)
               bankserver(Map.put(accounts, account, 0))
           end
 
-
         {:withdraw, from_pid, account, amount} ->
           case Map.get(accounts, account) do
             nil ->
-              send(from_pid, {:error, "Account not found"})
+              send(from_pid, {:ok, 0})
 
-            balance when balance >= amount ->
-              new_balance = balance - amount
-              Map.put(accounts, account, new_balance)
-              send(from_pid, {:ok, new_balance})
+            b when b >= amount ->
+              send(from_pid, {:ok, amount})
+              bankserver(Map.update(accounts, account, account, fn b -> b - amount end))
 
             _ ->
-              send(from_pid, {:error, "insufficient funds"})
+              send(from_pid, {:ok, 0})
               bankserver(accounts)
           end
 
-        {:deposit, from_pid, account,  amount} ->
+        {:deposit, from_pid, account, amount} ->
           case Map.get(accounts, account) do
             nil ->
-              send(from_pid, {:error, "Account not found"})
+              send(from_pid, {:ok, 0})
               bankserver(accounts)
 
             _ ->
@@ -187,27 +193,27 @@ defmodule Final do
               bankserver(updated_accounts)
           end
 
-          {:balance, from_pid, account } ->
-            case Map.get(accounts, account) do
-              nil ->
-                send(from_pid, {:error, "Account not found"})
-                bankserver(accounts)
+        {:balance, from_pid, account} ->
+          case Map.get(accounts, account) do
+            nil ->
+              send(from_pid, {:ok, 0})
+              bankserver(accounts)
 
-              balance ->
-                send(from_pid, {:ok, balance})
-                bankserver(accounts)
-            end
+            b ->
+              send(from_pid, {:ok, b})
+              bankserver(accounts)
+          end
 
-        {:transfer, from_pid,account_from, account_to,  amount} ->
+        {:transfer, from_pid, account_from, account_to, amount} ->
           case Map.get(accounts, account_from) do
             nil ->
-              send(from_pid, {:error, "Account 1 not found"})
+              send(from_pid, {:ok, 0})
               bankserver(accounts)
 
             balance when balance >= amount ->
               case Map.get(accounts, account_to) do
                 nil ->
-                  send(from_pid, {:error, "Account 2 not found"})
+                  send(from_pid, {:ok, 0})
                   bankserver(accounts)
 
                 _ ->
@@ -226,29 +232,11 @@ defmodule Final do
               end
 
             _ ->
-              send(from_pid, {:error, "Insufficient balance"})
+              send(from_pid, {:ok, 0})
               bankserver(accounts)
           end
       end
     end
-
-    # @spec send_and_receive(pid(), term()) :: term()
-    # defp send_and_receive(server_pid, message) do
-    #   response_pid=self()
-    #   # Send the message to the server
-    #   send(server_pid, message)
-
-    #   # Wait for a response from the server
-    #   receive do
-    #     {^response_pid, response} ->
-    #       response
-
-    #     {_, _} ->
-    #       # Ignore any unexpected messages and try again
-    #       send(server_pid, message)
-    #   end
-    # end
-
   end
 
   defmodule OTPBank do
@@ -337,15 +325,15 @@ defmodule Final do
     def handle_call({:withdraw, account, amount}, _from, state) do
       case Map.get(state, account) do
         nil ->
-          {:reply, {:ok, "Account not found"}, state}
+          {:reply, {:ok, 0}, state}
 
         balance when balance >= amount ->
           new_balance = balance - amount
           updated_state = Map.put(state, account, new_balance)
-          {:reply, {:ok, new_balance}, updated_state}
+          {:reply, {:ok, amount}, updated_state}
 
         _ ->
-          {:reply, {:error, "Insufficient funds"}, state}
+          {:reply, {:ok, 0}, state}
       end
     end
 
@@ -353,7 +341,7 @@ defmodule Final do
     def handle_call({:deposit, account, amount}, _from, state) do
       case Map.get(state, account) do
         nil ->
-          {:reply, {:error, "Account not found"}, state}
+          {:reply, {:ok, 0}, state}
 
         balance ->
           new_balance = balance + amount
@@ -377,10 +365,10 @@ defmodule Final do
     def handle_call({:balance, account}, _from, state) do
       case Map.get(state, account) do
         nil ->
-          {:reply, {:error, "Account not found"}, state}
+          {:reply, {:ok, 0}, state}
 
         balance ->
-          {:reply, balance, state}
+          {:reply, {:ok, balance}, state}
       end
     end
 
@@ -388,12 +376,12 @@ defmodule Final do
     def handle_call({:transfer, from_account, to_account, quantity}, _from, accounts) do
       case Map.has_key?(accounts, from_account) do
         false ->
-          {:reply, {:error, "Account not found"}, accounts}
+          {:reply, {:ok, 0}, accounts}
 
         true ->
           case Map.has_key?(accounts, to_account) do
             false ->
-              {:reply, {:error, "Account not found"}, accounts}
+              {:reply, {:ok, 0}, accounts}
 
             true ->
               case Map.get(accounts, from_account) do
@@ -406,10 +394,10 @@ defmodule Final do
                     |> Map.put(from_account, new_from_balance)
                     |> Map.put(to_account, new_to_balance)
 
-                  {:reply, {:ok, new_from_balance}, new_accounts}
+                  {:reply, {:ok, quantity}, new_accounts}
 
                 _ ->
-                  {:reply, {:error, "Insufficient funds"}, accounts}
+                  {:reply, {:ok, 0}, accounts}
               end
           end
       end

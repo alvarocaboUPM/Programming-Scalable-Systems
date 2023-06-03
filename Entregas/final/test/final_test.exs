@@ -13,7 +13,7 @@ defmodule FinalTest do
     assert Final.Bank.transfer(bank,1,2,5) == 5
     assert Final.Bank.balance(bank,1) == 5
     assert Final.Bank.balance(bank,2) == 5
-    assert Final.Bank.withdraw(bank,2,3) == 2
+    assert Final.Bank.withdraw(bank,2,3) == 3
     assert Final.Bank.balance(bank,2) == 2
   end
 
